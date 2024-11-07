@@ -1,6 +1,5 @@
 import asyncio
 import aiohttp
-import argparse
 import json
 import base64
 import os
@@ -65,22 +64,11 @@ class TalkingAnimation(FrameProcessor):
 
         await self.push_frame(frame)
 
-async def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Voice Agent Bot")
-    parser.add_argument("--url", required=True, help="Daily room URL")
-    parser.add_argument("--token", required=True, help="Daily room token")
-    parser.add_argument("--config", required=True, help="Base64 encoded configuration")
-    args = parser.parse_args()
-
-    # Decode and parse configuration
-    config_str = base64.b64decode(args.config).decode()
-    config = json.loads(config_str)
-
+async def main(url, token, config_b64):
     async with aiohttp.ClientSession() as session:
         transport = DailyTransport(
-            args.url,
-            args.token,
+            url,
+            token,
             "Voice Agent",
             DailyParams(
                 audio_out_enabled=True,
@@ -92,6 +80,10 @@ async def main():
                 transcription_enabled=True,
             ),
         )
+
+        # Decode and parse configuration
+        config_str = base64.b64decode(config_b64).decode()
+        config = json.loads(config_str)
 
         # Configure TTS with provided parameters
         tts_params = CartesiaTTSService.InputParams(
@@ -146,4 +138,12 @@ async def main():
         await runner.run(task)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Voice Agent Bot")
+    parser.add_argument("--url", required=True, help="Daily room URL")
+    parser.add_argument("--token", required=True, help="Daily room token")
+    parser.add_argument("--config", required=True, help="Base64 encoded configuration")
+    args = parser.parse_args()
+
+    asyncio.run(main(args.url, args.token, args.config))
