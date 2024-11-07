@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -15,22 +16,11 @@ from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, Dail
 load_dotenv(override=True)
 
 class BotConfig(BaseModel):
-    speed: str = Field(..., description="Voice speed (slow/normal/fast)")
-    emotion: List[str] = Field(..., description="List of emotions for the voice")
-    prompt: str = Field(..., description="System prompt for the bot")
-    voice_id: str = Field(..., description="Voice ID for TTS")
+    speed: str = Field("normal", description="Voice speed (slow/normal/fast)")
+    emotion: List[str] = Field(["positivity:high", "curiosity"], description="List of emotions for the voice")
+    prompt: str = Field("You are a friendly customer service agent...", description="System prompt for the bot")
+    voice_id: str = Field("voice_id_here", description="Voice ID for TTS")
     session_time: Optional[float] = Field(3600, description="Session expiry time in seconds")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "speed": "normal",
-                "emotion": ["positivity:high", "curiosity"],
-                "prompt": "You are a friendly customer service agent...",
-                "voice_id": "voice_id_here",
-                "session_time": 3600
-            }
-        }
 
 MAX_BOTS_PER_ROOM = 1
 bot_procs = {}
@@ -109,12 +99,13 @@ async def start_agent(config: BotConfig):
         return {
             "room_url": room.url,
             "token": token,
-            "bot_pid": proc.pid
+            "bot_pid": proc.pid,
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
+    
 @app.get("/status/{pid}")
 def get_status(pid: int):
     proc = bot_procs.get(pid)
@@ -122,7 +113,7 @@ def get_status(pid: int):
         raise HTTPException(status_code=404, detail=f"Bot with process id: {pid} not found")
     
     status = "running" if proc[0].poll() is None else "finished"
-    return {"bot_id": pid, "status": status}
+    return JSONResponse({"bot_id": pid, "status": status})
 
 if __name__ == "__main__":
     import uvicorn
