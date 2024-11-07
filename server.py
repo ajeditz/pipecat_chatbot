@@ -1,56 +1,55 @@
-import aiohttp
-import os
-import argparse
-import subprocess
-import logging
-from dotenv import load_dotenv
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
-
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from contextlib import asynccontextmanager
+import aiohttp
+import argparse
+import os
+import json
+import base64
+import subprocess
+from dotenv import load_dotenv
 from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, DailyRoomParams
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+load_dotenv(override=True)
 
-# Load environment variables from .env file
-load_dotenv()
+class BotConfig(BaseModel):
+    speed: str = Field(..., description="Voice speed (slow/normal/fast)")
+    emotion: List[str] = Field(..., description="List of emotions for the voice")
+    prompt: str = Field(..., description="System prompt for the bot")
+    voice_id: str = Field(..., description="Voice ID for TTS")
+    session_time: Optional[float] = Field(3600, description="Session expiry time in seconds")
 
-# Verify API key is available
-DAILY_API_KEY = os.getenv("DAILY_API_KEY")
-if not DAILY_API_KEY:
-    raise ValueError("DAILY_API_KEY environment variable is not set")
-
-# Configure Daily.co API URL
-DAILY_API_URL = "https://api.daily.co/v1"
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "speed": "normal",
+                "emotion": ["positivity:high", "curiosity"],
+                "prompt": "You are a friendly customer service agent...",
+                "voice_id": "voice_id_here",
+                "session_time": 3600
+            }
+        }
 
 MAX_BOTS_PER_ROOM = 1
-
-# Bot sub-process dict for status reporting and concurrency control
 bot_procs = {}
-
 daily_helpers = {}
 
-def cleanup():
-    # Clean up function, just to be extra safe
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    aiohttp_session = aiohttp.ClientSession()
+    daily_helpers["rest"] = DailyRESTHelper(
+        daily_api_key=os.getenv("DAILY_API_KEY", ""),
+        daily_api_url=os.getenv("DAILY_API_URL", "https://api.daily.co/v1"),
+        aiohttp_session=aiohttp_session,
+    )
+    yield
+    await aiohttp_session.close()
     for entry in bot_procs.values():
         proc = entry[0]
         proc.terminate()
         proc.wait()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with aiohttp.ClientSession() as aiohttp_session:
-        daily_helpers["rest"] = DailyRESTHelper(
-            daily_api_key=DAILY_API_KEY,
-            daily_api_url=DAILY_API_URL,
-            aiohttp_session=aiohttp_session,
-        )
-        yield
-        cleanup()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -62,31 +61,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def start_agent(request: Request):
+@app.post("/start_bot")
+async def start_agent(config: BotConfig):
     try:
-        logger.info("Creating new Daily.co room")
-        
-        # Configure room parameters
-        room_params = DailyRoomParams(
-            privacy="public",  # Make room public
-            max_participants=10,  # Set max participants
-            enable_chat=True,    # Enable chat
-        )
-        
-        # Create the room
-        room = await daily_helpers["rest"].create_room(room_params)
-        logger.info(f"Room created successfully: {room.url}")
-
+        # Create room
+        room = await daily_helpers["rest"].create_room(DailyRoomParams())
         if not room.url:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to get room URL from Daily.co API",
-            )
+            raise HTTPException(status_code=500, detail="Failed to create room")
 
-        # Check bot limits
+        # Check bot limit
         num_bots_in_room = sum(
-            1 for proc in bot_procs.values() if proc[1] == room.url and proc[0].poll() is None
+            1 for proc in bot_procs.values() 
+            if proc[1] == room.url and proc[0].poll() is None
         )
         if num_bots_in_room >= MAX_BOTS_PER_ROOM:
             raise HTTPException(
@@ -94,51 +80,49 @@ async def start_agent(request: Request):
                 detail=f"Max bot limit reached for room: {room.url}"
             )
 
-        # Get the token for the room
-        token = await daily_helpers["rest"].get_token(room.url)
+        # Get token
+        token = await daily_helpers["rest"].get_token(
+            room.url, 
+            expiry_time=config.session_time
+        )
+
         if not token:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to get token for room: {room.url}"
             )
 
-        # Start the bot process
-        try:
-            proc = subprocess.Popen(
-                [f"python3 -m bot -u {room.url} -t {token}"],
-                shell=True,
-                bufsize=1,
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-            )
-            bot_procs[proc.pid] = (proc, room.url)
-            logger.info(f"Bot process started with PID: {proc.pid}")
-        except Exception as e:
-            logger.error(f"Failed to start bot process: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to start bot process: {str(e)}"
-            )
+        # Convert config to base64 to safely pass it as a command line argument
+        config_str = json.dumps(config.dict())
+        config_b64 = base64.b64encode(config_str.encode()).decode()
 
-        return RedirectResponse(room.url)
+        # Start bot process with configuration
+        cmd = f"python3 bot.py --url {room.url} --token {token} --config {config_b64}"
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            bufsize=1,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        bot_procs[proc.pid] = (proc, room.url)
+
+        return {
+            "room_url": room.url,
+            "token": token,
+            "bot_pid": proc.pid
+        }
 
     except Exception as e:
-        logger.error(f"Error in start_agent: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create room: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/status/{pid}")
 def get_status(pid: int):
     proc = bot_procs.get(pid)
     if not proc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Bot with process id: {pid} not found"
-        )
-
+        raise HTTPException(status_code=404, detail=f"Bot with process id: {pid} not found")
+    
     status = "running" if proc[0].poll() is None else "finished"
-    return JSONResponse({"bot_id": pid, "status": status})
+    return {"bot_id": pid, "status": status}
 
 if __name__ == "__main__":
     import uvicorn
@@ -146,7 +130,7 @@ if __name__ == "__main__":
     default_host = os.getenv("HOST", "0.0.0.0")
     default_port = int(os.getenv("FAST_API_PORT", "7860"))
 
-    parser = argparse.ArgumentParser(description="Daily Storyteller FastAPI server")
+    parser = argparse.ArgumentParser(description="Daily Voice Agent FastAPI server")
     parser.add_argument("--host", type=str, default=default_host, help="Host address")
     parser.add_argument("--port", type=int, default=default_port, help="Port number")
     parser.add_argument("--reload", action="store_true", help="Reload code on change")
