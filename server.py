@@ -19,7 +19,7 @@ class BotConfig(BaseModel):
     speed: str = Field("normal", description="Voice speed (slow/normal/fast)")
     emotion: List[str] = Field(["positivity:high", "curiosity"], description="List of emotions for the voice")
     prompt: str = Field("You are a friendly customer service agent...", description="System prompt for the bot")
-    voice_id: str = Field("voice_id_here", description="Voice ID for TTS")
+    voice_id: str = Field("a0e99841-438c-4a64-b679-ae501e7d6091", description="Voice ID for TTS")
     session_time: Optional[float] = Field(3600, description="Session expiry time in seconds")
 
 MAX_BOTS_PER_ROOM = 1
@@ -87,7 +87,7 @@ async def start_agent(config: BotConfig):
         config_b64 = base64.b64encode(config_str.encode()).decode()
 
         # Start bot process with configuration
-        cmd = f"python3 bot.py --url {room.url} --token {token} --config {config_b64}"
+        cmd = f"python3 bot2.py --url {room.url} --token {token} --config {config_b64}"
         proc = subprocess.Popen(
             cmd,
             shell=True,
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     import uvicorn
 
     default_host = os.getenv("HOST", "0.0.0.0")
-    default_port = int(os.getenv("FAST_API_PORT", "7860"))
+    default_port = int(os.getenv("FAST_API_PORT", "8080"))
 
     parser = argparse.ArgumentParser(description="Daily Voice Agent FastAPI server")
     parser.add_argument("--host", type=str, default=default_host, help="Host address")

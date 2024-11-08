@@ -15,7 +15,7 @@ load_dotenv(override=True)
 
 # ------------ Configuration ------------ #
 
-MAX_SESSION_TIME = 5 * 60  # 5 minutes
+MAX_SESSION_TIME = 10 * 60  # 5 minutes
 # List of require env vars our bot requires
 REQUIRED_ENV_VARS = [
     'DAILY_API_KEY',

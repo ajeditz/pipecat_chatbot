@@ -5,12 +5,12 @@ RUN mkdir /app/assets
 RUN mkdir /app/utils
 COPY *.py /app/
 COPY requirements.txt /app/
-copy assets/* /app/assets/
-copy utils/* /app/utils/
+COPY assets/* /app/assets/
+# COPY utils/* /app/utils/
 
 WORKDIR /app
 RUN pip3 install -r requirements.txt
 
-EXPOSE 7860
+EXPOSE 8080
 
 CMD ["python3", "server.py"]
