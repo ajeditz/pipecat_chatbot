@@ -67,6 +67,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.post("/start_bot")
 async def start_agent(config: BotConfig):
     print(f"!!! Creating room")
@@ -95,8 +96,6 @@ async def start_agent(config: BotConfig):
 
     # Spawn a new agent, and join the user session
     # Note: this is mostly for demonstration purposes (refer to 'deployment' in README)
-
-
     try:
         config_str = json.dumps(config.model_dump())
         config_b64 = base64.b64encode(config_str.encode()).decode()
@@ -110,13 +109,14 @@ async def start_agent(config: BotConfig):
         )
         bot_procs[proc.pid] = (proc, room.url)
 
-    return {
-        "room_url": room.url,
-        "token": token,
-        "bot_pid": proc.pid,
-    }
+        return {
+            "room_url": room.url,
+            "token": token,
+            "bot_pid": proc.pid,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start subprocess: {e}")
+
 
 @app.get("/status/{pid}")
 def get_status(pid: int):
