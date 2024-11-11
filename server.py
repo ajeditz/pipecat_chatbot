@@ -83,7 +83,7 @@ async def start_agent(config: BotConfig):
             )
 
         # Convert config to base64 to safely pass it as a command line argument
-        config_str = json.dumps(config.dict())
+        config_str = json.dumps(config.model_dump())
         config_b64 = base64.b64encode(config_str.encode()).decode()
 
         # Start bot process with configuration
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Daily Voice Agent FastAPI server")
     parser.add_argument("--host", type=str, default=default_host, help="Host address")
     parser.add_argument("--port", type=int, default=default_port, help="Port number")
-    parser.add_argument("--reload", action="store_true", help="Reload code on change")
+    parser.add_argument("--reload", action="store_true",default=True, help="Reload code on change")
 
     config = parser.parse_args()
 
