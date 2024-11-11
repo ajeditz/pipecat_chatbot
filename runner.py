@@ -1,24 +1,36 @@
 import aiohttp
+import argparse
 import os
+
 from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper
 
-async def configure(aiohttp_session: aiohttp.ClientSession, room_url: str, expiry_time: float):
-    """
-    Configure the Daily room with the provided parameters
-    
-    Args:
-        aiohttp_session: Active aiohttp client session
-        room_url: URL of the Daily room
-        expiry_time: Token expiry time in seconds
-    
-    Returns:
-        tuple: (room_url, token)
-    """
+
+async def configure(aiohttp_session: aiohttp.ClientSession):
+    # parser = argparse.ArgumentParser(description="Daily AI SDK Bot Sample")
+    # parser.add_argument(
+    #     "-u", "--url", type=str, required=False, help="URL of the Daily room to join"
+    # )
+    # parser.add_argument(
+    #     "-k",
+    #     "--apikey",
+    #     type=str,
+    #     required=False,
+    #     help="Daily API Key (needed to create an owner token for the room)",
+    # )
+
+    # args, unknown = parser.parse_known_args()
+
+    url = os.getenv("DAILY_SAMPLE_ROOM_URL")
     key = os.getenv("DAILY_API_KEY")
-    
+
+    if not url:
+        raise Exception(
+            "No Daily room specified. use the -u/--url option from the command line, or set DAILY_SAMPLE_ROOM_URL in your environment to specify a Daily room URL."
+        )
+
     if not key:
         raise Exception(
-            "No Daily API key specified. Set DAILY_API_KEY in your environment."
+            "No Daily API key specified. use the -k/--apikey option from the command line, or set DAILY_API_KEY in your environment to specify a Daily API key, available from https://dashboard.daily.co/developers."
         )
 
     daily_rest_helper = DailyRESTHelper(
@@ -27,5 +39,10 @@ async def configure(aiohttp_session: aiohttp.ClientSession, room_url: str, expir
         aiohttp_session=aiohttp_session,
     )
 
-    token = await daily_rest_helper.get_token(room_url, expiry_time)
-    return (room_url, token)
+    # Create a meeting token for the given room with an expiration 1 hour in
+    # the future.
+    expiry_time: float = 60 * 60
+
+    token = await daily_rest_helper.get_token(url, expiry_time)
+
+    return (url, token)

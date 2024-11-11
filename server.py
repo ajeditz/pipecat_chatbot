@@ -1,30 +1,53 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from contextlib import asynccontextmanager
 import aiohttp
-import argparse
 import os
+import argparse
+import subprocess
+import time
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 import json
 import base64
-import subprocess
+
+from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, DailyRoomParams, DailyRoomProperties
+
 from dotenv import load_dotenv
-from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, DailyRoomParams
 
 load_dotenv(override=True)
 
+
 class BotConfig(BaseModel):
     speed: str = Field("normal", description="Voice speed (slow/normal/fast)")
-    emotion: List[str] = Field(["positivity:high", "curiosity"], description="List of emotions for the voice")
+    emotion: list[str] = Field(["positivity:high", "curiosity"], description="List of emotions for the voice")
     prompt: str = Field("You are a friendly customer service agent...", description="System prompt for the bot")
+<<<<<<< HEAD
     voice_id: str = Field("a0e99841-438c-4a64-b679-ae501e7d6091", description="Voice ID for TTS")
     session_time: Optional[float] = Field(3600, description="Session expiry time in seconds")
+=======
+    voice_id: str = Field("voice_id_here", description="Voice ID for TTS")
+    session_time: float = Field(description="Session expiry time in min.")
+
+>>>>>>> dddb16bd31d15ae253414aaf41349559e65d309f
 
 MAX_BOTS_PER_ROOM = 1
+
+# Bot sub-process dict for status reporting and concurrency control
 bot_procs = {}
+
 daily_helpers = {}
+
+
+def cleanup():
+    # Clean up function, just to be extra safe
+    for entry in bot_procs.values():
+        proc = entry[0]
+        proc.terminate()
+        proc.wait()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,10 +59,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     await aiohttp_session.close()
-    for entry in bot_procs.values():
-        proc = entry[0]
-        proc.terminate()
-        proc.wait()
+    cleanup()
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -51,9 +72,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.post("/start_bot")
 async def start_agent(config: BotConfig):
+    print(f"!!! Creating room")
+    room = await daily_helpers["rest"].create_room(DailyRoomParams(properties=DailyRoomProperties(exp= time.time() + (config.session_time) * 60)))
+    print(f"!!! Room URL: {room.url}")
+    # Ensure the room property is present
+    if not room.url:
+        raise HTTPException(
+            status_code=500,
+            detail="Missing 'room' property in request data. Cannot start agent without a target room!",
+        )
+
+    # Check if there is already an existing process running in this room
+    num_bots_in_room = sum(
+        1 for proc in bot_procs.values() if proc[1] == room.url and proc[0].poll() is None
+    )
+    if num_bots_in_room >= MAX_BOTS_PER_ROOM:
+        raise HTTPException(status_code=500, detail=f"Max bot limited reach for room: {room.url}")
+
+    # Get the token for the room
+    token = await daily_helpers["rest"].get_token(room.url)
+
+    if not token:
+        raise HTTPException(status_code=500, detail=f"Failed to get token for room: {room.url}")
+
+
+    # Spawn a new agent, and join the user session
+    # Note: this is mostly for demonstration purposes (refer to 'deployment' in README)
     try:
+<<<<<<< HEAD
         # Create room
         room = await daily_helpers["rest"].create_room(DailyRoomParams())
         if not room.url:
@@ -88,6 +137,12 @@ async def start_agent(config: BotConfig):
 
         # Start bot process with configuration
         cmd = f"python3 bot2.py --url {room.url} --token {token} --config {config_b64}"
+=======
+        config_str = json.dumps(config.model_dump())
+        config_b64 = base64.b64encode(config_str.encode()).decode()
+
+        cmd = f"python3 bot.py --url {room.url} --token {token} --config {config_b64}"
+>>>>>>> dddb16bd31d15ae253414aaf41349559e65d309f
         proc = subprocess.Popen(
             cmd,
             shell=True,
@@ -101,19 +156,27 @@ async def start_agent(config: BotConfig):
             "token": token,
             "bot_pid": proc.pid,
         }
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-    
+        raise HTTPException(status_code=500, detail=f"Failed to start subprocess: {e}")
+
+
 @app.get("/status/{pid}")
 def get_status(pid: int):
+    # Look up the subprocess
     proc = bot_procs.get(pid)
+
+    # If the subprocess doesn't exist, return an error
     if not proc:
         raise HTTPException(status_code=404, detail=f"Bot with process id: {pid} not found")
-    
-    status = "running" if proc[0].poll() is None else "finished"
+
+    # Check the status of the subprocess
+    if proc[0].poll() is None:
+        status = "running"
+    else:
+        status = "finished"
+
     return JSONResponse({"bot_id": pid, "status": status})
+
 
 if __name__ == "__main__":
     import uvicorn
@@ -121,16 +184,16 @@ if __name__ == "__main__":
     default_host = os.getenv("HOST", "0.0.0.0")
     default_port = int(os.getenv("FAST_API_PORT", "8080"))
 
-    parser = argparse.ArgumentParser(description="Daily Voice Agent FastAPI server")
+    parser = argparse.ArgumentParser(description="Daily Storyteller FastAPI server")
     parser.add_argument("--host", type=str, default=default_host, help="Host address")
     parser.add_argument("--port", type=int, default=default_port, help="Port number")
     parser.add_argument("--reload", action="store_true",default=True, help="Reload code on change")
 
-    config = parser.parse_args()
+    configuration = parser.parse_args()
 
     uvicorn.run(
         "server:app",
-        host=config.host,
-        port=config.port,
-        reload=config.reload,
+        host=configuration.host,
+        port=configuration.port,
+        reload=configuration.reload,
     )
